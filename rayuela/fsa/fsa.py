@@ -2,12 +2,12 @@ from __future__ import annotations
 import copy
 import numpy as np
 from frozendict import frozendict
-from itertools import product
+from itertools import chain, product
 
 from collections import Counter
 from collections import defaultdict as dd
 
-from rayuela.base.semiring import Boolean, String, ProductSemiring
+from rayuela.base.semiring import Boolean, String, ProductSemiring, Semiring
 from rayuela.base.misc import epsilon_filter
 from rayuela.base.symbol import Sym, ε, ε_1, ε_2
 
@@ -52,7 +52,7 @@ class FSA:
 
 		# final weight function
 		self.ρ = R.chart()
-
+	
 	def add_state(self, q):
 		self.Q.add(q)
 
@@ -101,7 +101,7 @@ class FSA:
 		self.δ = frozendict(self.δ)
 		self.λ = frozendict(self.λ)
 		self.ρ = frozendict(self.ρ)
-
+	
 	@property
 	def I(self):
 		for q, w in self.λ.items():
@@ -114,6 +114,13 @@ class FSA:
 			if w != self.R.zero:
 				yield q, w
 
+	@property
+	def D_tuples(self):
+		for q1 in self.δ:
+			for a in self.δ[q1]:
+				for q2 in self.δ[q1][a]:
+					yield (q1, a, q2), self.δ[q1][a][q2]
+
 	def arcs(self, i, no_eps=False):
 		for a, T in self.δ[i].items():
 			if no_eps and a == ε:
@@ -122,19 +129,24 @@ class FSA:
 				if w == self.R.zero:
 					continue
 				yield a, j, w
+	
+	@staticmethod
+	def string_to_fsa(R: Semiring, string: str) -> FSA:
+		assert isinstance(string, str)
+
+		fsa = FSA(R=R)
+		for i, x in enumerate(list(string)):
+			fsa.add_arc(State(i), Sym(x), State(i+1), R.one)
+		
+		fsa.set_I(State(0), R.one)
+		fsa.add_F(State(len(string)), R.one)
+		return fsa
 
 	def accept(self, string):
 		""" determines whether a string is in the language """
-		assert isinstance(string, str)
 
-		fsa = FSA(R=self.R)
-		for i, x in enumerate(list(string)):
-			fsa.add_arc(State(i), Sym(x), State(i+1), self.R.one)
-		
-		fsa.set_I(State(0), self.R.one)
-		fsa.add_F(State(len(string)), self.R.one)
-
-		return self.intersect(fsa).pathsum()
+		string_fsa = self.string_to_fsa(self.R, string)
+		return self.intersect(string_fsa).pathsum()
 
 	@property
 	def num_states(self):
@@ -217,55 +229,169 @@ class FSA:
 	def deterministic(self) -> bool:
 
 		# Homework 1: Question 2
-		raise NotImplementedError
+			for v1 in self.δ.values():
+				for k2, v2 in v1.items():
+					if k2 == Sym("ε"):
+						return False
+					if len(v2.keys()) > 1:
+						return False
+			return True
 
 	@property
 	def pushed(self) -> bool:
 
 		# Homework 1: Question 2
-		raise NotImplementedError
+		out = self.R.chart()
+		for q in self.Q:
+			for a, dest_state_to_weight in self.δ[q].items():
+				for weight in dest_state_to_weight.values():
+					out[q] += weight
+
+			out[q] += self.ρ[q]
+			if out[q] != self.R.one:
+				return False
+		return True
 
 	def reverse(self) -> FSA:
 		""" computes the reverse of the FSA """
 
 		# Homework 1: Question 3
-		raise NotImplementedError
+		rev_fsa = FSA(R=self.R)
+		rev_fsa.λ = self.ρ.copy()
+		rev_fsa.ρ = self.λ.copy()
+		rev_fsa.Q = self.Q.copy()
 
+		for q, adict in self.δ.items():
+			for a, q2dict in adict.items():
+				for q2 in q2dict.keys():
+					rev_fsa.add_arc(q2, a, q)
+
+		return rev_fsa
+	
 	def accessible(self) -> set:
 		""" computes the set of acessible states """
 
 		# Homework 1: Question 3
-		raise NotImplementedError
+		stack = list(self.λ.keys())
+		accessible_states = set(stack)
+
+		# we pop off the stack to find the next state to check out. This does a depth first search.
+		# we add to the stack new found which have never been in the stack
+		while len(stack) > 0:
+			q = stack.pop()
+			for a, q2dict in self.δ[q].items():
+				for q2 in q2dict.keys():
+					if q2 not in accessible_states:  # it's never been in the stack
+						accessible_states.add(q2)
+						stack.append(q2)
+
+		return accessible_states
 
 	def coaccessible(self) -> set:
 		""" computes the set of co-acessible states """
 
 		# Homework 1: Question 3
-		raise NotImplementedError
+		rev_fsa = self.reverse()
+		return rev_fsa.accessible()
+
+	def restricted(self, states_to_keep: set):
+		fsa = FSA(R=self.R)
+		fsa.Q = states_to_keep
+
+		for q in states_to_keep.intersection(set(self.λ.keys())):
+			fsa.add_I(q, self.λ[q])
+		for q in states_to_keep.intersection(set(self.ρ.keys())):
+			fsa.add_F(q, self.ρ[q])
+
+		for q in states_to_keep:
+			for a, q2dict in self.δ[q].items():
+				for q2, weight in q2dict.items():
+					if q2 in states_to_keep:
+						fsa.add_arc(q, a, q2, weight)
+		return fsa
+
 
 	def trim(self) -> FSA:
 		""" keeps only those states that are both accessible and co-accessible """
 
 		# Homework 1: Question 3
-		raise NotImplementedError
+		states_to_keep = self.accessible().intersection(self.coaccessible())
+		return self.restricted(states_to_keep)
+	
+
+	def prefixed_states_fsa(self, prefix):
+		fsa = FSA(R=self.R)
+		for (q1, a, q2), w in self.D_tuples:
+			fsa.add_arc((prefix, q1.idx), a, (prefix, q2.idx), w)
+		for q, w in self.I:
+			fsa.add_I(State((prefix, q.idx)), w)
+		for q, w in self.F:
+			fsa.add_F(State((prefix, q.idx)), w)
+		return fsa
 
 	def union(self, fsa) -> FSA:
 		""" construct the union of the two FSAs """
 
 		# Homework 1: Question 4
-		raise NotImplementedError
+		fsa1, fsa2 = self.prefixed_states_fsa("fsa1"), fsa.prefixed_states_fsa("fsa2")
+		for (q1, a, q2), w in fsa2.D_tuples:
+			fsa1.add_arc(q1, a, q2, w)
+		for q, w in fsa2.F:
+			fsa1.add_F(q, w)
 
-	def concatenate(self, fsa) -> FSA:
+		old_I = [pairs for pairs in fsa1.I]
+		fsa1.λ = self.R.chart()  # reset this to just one input
+		fsa1.add_I(State("init"), self.R.one)
+		for q, w in chain(old_I, fsa2.I):
+			fsa1.add_arc(State("init"), ε, q, w)
+
+		return fsa1
+
+
+	def concatenate(self, fsa: FSA) -> FSA:
 		""" construct the concatenation of the two FSAs """
 
 		# Homework 1: Question 4
-		raise NotImplementedError
+		fsa1, fsa2 = self.prefixed_states_fsa("fsa1"), fsa.prefixed_states_fsa("fsa2")
+		for (q1, a, q2), w in fsa2.D_tuples:
+			fsa1.add_arc(q1, a, q2, w)
+
+		old_F = [pairs for pairs in fsa1.F]
+		fsa1.ρ = self.R.chart()
+		link_state = State("link")
+		for q, w in old_F:
+			fsa1.add_arc(q, ε, link_state, w)
+		for q, w in fsa2.I:
+			fsa1.add_arc(link_state, ε, q, w)
+
+		for q, w in fsa2.F:
+			fsa1.add_F(q, w)
+
+		return fsa1
 
 	def closure(self) -> FSA:
 		""" compute the Kleene closure of the FSA """
 
 		# Homework 1: Question 4
-		raise NotImplementedError
+		fsa = self.prefixed_states_fsa("fsa")
+		init, final = State("init"), State("final")
+		fsa.add_arc(init, ε, final, self.R.one)
+
+		for q, w in fsa.I:
+			fsa.add_arc(init, ε, q, w)
+		
+		for q, w in fsa.F:
+			fsa.add_arc(q, ε, final, w)
+			fsa.add_arc(q, ε, init, w)
+		
+		fsa.λ = self.R.chart()
+		fsa.set_I(init, self.R.one)
+		fsa.ρ = self.R.chart()
+		fsa.set_F(final, self.R.one)
+
+		return fsa
+
+
 
 	def pathsum(self, strategy=Strategy.LEHMANN):
 		if self.acyclic:
