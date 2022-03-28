@@ -144,7 +144,6 @@ class FSA:
 
 	def accept(self, string):
 		""" determines whether a string is in the language """
-
 		string_fsa = self.string_to_fsa(self.R, string)
 		return self.intersect(string_fsa).pathsum()
 
@@ -263,8 +262,8 @@ class FSA:
 
 		for q, adict in self.δ.items():
 			for a, q2dict in adict.items():
-				for q2 in q2dict.keys():
-					rev_fsa.add_arc(q2, a, q)
+				for q2, w in q2dict.items():
+					rev_fsa.add_arc(q2, a, q, w)
 
 		return rev_fsa
 	
@@ -398,6 +397,25 @@ class FSA:
 			strategy = Strategy.VITERBI
 		pathsum = Pathsum(self)
 		return pathsum.pathsum(strategy)
+
+	def viterbi_arcsum(self, qstart, a, qdest):
+		w = self.δ[qstart][a][qdest]
+		pathsum = Pathsum(self)
+		α = pathsum.viterbi_fwd()
+		β = pathsum.viterbi_bwd()
+		return α[qstart] * w * β[qdest]
+
+	def viterbi_arcsums(self):
+		pathsum = Pathsum(self)
+		α = pathsum.viterbi_fwd()
+		β = pathsum.viterbi_bwd()
+		output = dd(lambda : dd(lambda : dd(lambda : self.R.zero)))
+		for (qstart, a, qdest), w in self.D_tuples:
+			output[qstart][a][qdest] = α[qstart] * w * β[qdest]
+		
+		return output
+
+
 
 	def edge_marginals(self) -> dict:
 		""" computes the edge marginals μ(q→q') """

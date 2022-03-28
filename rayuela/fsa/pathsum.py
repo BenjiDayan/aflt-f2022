@@ -1,3 +1,4 @@
+from matplotlib.pyplot import thetagrids
 import numpy as np
 from numpy import linalg as LA
 from frozendict import frozendict
@@ -5,7 +6,10 @@ from frozendict import frozendict
 from rayuela.base.datastructures import PriorityQueue
 from rayuela.base.semiring import Real
 
-from rayuela.fsa.state import State
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+	from rayuela.fsa.fsa import FSA
+	from rayuela.fsa.state import State
 
 class Strategy:
 	VITERBI = 1
@@ -20,7 +24,7 @@ class Pathsum:
 	def __init__(self, fsa):
 
 		# basic FSA stuff
-		self.fsa = fsa
+		self.fsa: FSA = fsa
 		self.R = fsa.R
 		self.N = self.fsa.num_states
 
@@ -175,8 +179,19 @@ class Pathsum:
 			pathsum += self.fsa.λ[q] * 𝜷[q]
 		return pathsum
 
+
 	def viterbi_fwd(self):
-		raise NotImplementedError
+		assert self.fsa.acyclic
+		
+		α = self.R.chart()
+		for q, w in self.fsa.I:
+			α[q] = w
+
+		rev_fsa = self.fsa.reverse()  # solely for access to δ[q_start][sym][q_end] dictionary
+		for q_dest in self.fsa.toposort(rev=False):
+			for _sym, q_start, w in rev_fsa.arcs(q_dest):
+				α[q_dest] += w * α[q_start]
+		return frozendict(α)
 
 	def viterbi_bwd(self):
 		""" The Viterbi algorithm run backwards. """
