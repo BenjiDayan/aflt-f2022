@@ -2,11 +2,15 @@ from matplotlib.pyplot import thetagrids
 import numpy as np
 from numpy import linalg as LA
 from frozendict import frozendict
+from path import Path
 
 from rayuela.base.datastructures import PriorityQueue
 from rayuela.base.semiring import Real
 
 from typing import TYPE_CHECKING
+from rayuela.base.symbol import Sym
+
+from rayuela.fsa.scc import SCC
 if TYPE_CHECKING:
 	from rayuela.fsa.fsa import FSA
 	from rayuela.fsa.state import State
@@ -275,7 +279,31 @@ class Pathsum:
 
 	def decomposed_lehmann_pathsum(self):
 		# Homework 3: Question 4
-		raise NotImplementedError
+		sccs = SCC(self.fsa).scc()
+		fsa = self.fsa.copy()
+		for scc_states in sccs:
+			scc_restricted_fsa = fsa.restricted(scc_states)
+			scc_restricted_fsa
+			scc_restricted_fsa_ps = Pathsum(scc_restricted_fsa)
+			closure_matrix = scc_restricted_fsa_ps.lehmann()
+			new_states, new_arcs, new_I, new_F, in_map, out_map = fsa.blob_surgery_in_out(scc_states)
+			# replace new_arcs with matrix weights between every node
+			new_arcs = set()
+			for i in scc_restricted_fsa.Q:
+				for j in scc_restricted_fsa.Q:
+					w = closure_matrix[i, j]
+					i_new = in_map[i]
+					j_new = out_map[j]
+					new_arcs.add((i_new, Sym('matrix'), j_new, w))
+	
+			scc_restricted_fsa_ps._lehmann()
+			fsa.blob_surgery(scc_states, new_states, in_map, out_map, new_arcs, new_I, new_F)
+
+		# return fsa
+		ps = Pathsum(fsa)
+		return ps.pathsum(Strategy.LEHMANN)
+	
+		
 
 	def bellmanford_pathsum(self):
 		pathsum = self.R.zero

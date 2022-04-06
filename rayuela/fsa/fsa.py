@@ -1,5 +1,6 @@
 from __future__ import annotations
 import copy
+from typing import List, Set
 import numpy as np
 from frozendict import frozendict
 from itertools import chain, product
@@ -115,8 +116,8 @@ class FSA:
 				yield q, w
 
 	@property
-	def D_tuples(self):
-		for q1 in self.δ:
+	def D_tuples(self, in_state=None):
+		for q1 in (self.δ if in_state is None else [in_state]):
 			for a in self.δ[q1]:
 				for q2 in self.δ[q1][a]:
 					yield (q1, a, q2), self.δ[q1][a][q2]
@@ -168,17 +169,21 @@ class FSA:
 
 		return F
 
-	def dfs(self):
+	def dfs(self, ll=False):
 		""" Depth-first search (Cormen et al. 2019; Section 22.3) """
 
 		in_progress, finished = set([]), {}
 		cyclic, counter = False, 0
+		if ll:
+			trees = []
 
 		def _dfs(p):
 			nonlocal in_progress
 			nonlocal finished
 			nonlocal cyclic
 			nonlocal counter
+			if ll:
+				nonlocal trees
 
 			in_progress.add(p)
 
@@ -186,6 +191,7 @@ class FSA:
 				if q in in_progress:
 					cyclic = True
 				elif q not in finished:
+					
 					_dfs(q)
 
 			in_progress.remove(p)
@@ -271,7 +277,7 @@ class FSA:
 		""" computes the set of acessible states """
 
 		# Homework 1: Question 3
-		stack = list(self.λ.keys())
+		stack = list([k for k,v in self.λ.items() if v != self.R.zero])
 		accessible_states = set(stack)
 
 		# we pop off the stack to find the next state to check out. This does a depth first search.
@@ -308,6 +314,66 @@ class FSA:
 					if q2 in states_to_keep:
 						fsa.add_arc(q, a, q2, weight)
 		return fsa
+
+	def blob_surgery(self, blob_states: Set[State], new_states, in_map, out_map, new_arcs, new_I, new_F):
+		rev_fsa = self.reverse()
+		for state in blob_states:
+			# remove state from intial/final, if they're in the dict
+			self.λ.pop(state, None)
+			self.ρ.pop(state, None)
+			# replace arcs going out from state
+			for sym, qdest, weight in self.arcs(state):
+				if not qdest in blob_states:
+					self.add_arc(out_map[state], sym, qdest, weight)
+
+			self.δ.pop(state)
+			# replace arcs going into state
+			for sym, qstart, weight in rev_fsa.arcs(state):
+				if not qstart in blob_states:
+					self.δ[qstart][sym].pop(state, None)
+					self.add_arc(qstart, sym, in_map[state], weight)
+
+			# remove state from states set
+			self.Q.remove(state)
+				
+		self.λ.update(new_I)
+		self.ρ.update(new_F)
+
+		# add arcs between new states
+		for qstart, sym, qdest, w in new_arcs:
+			self.add_arc(qstart, sym, qdest, w)
+
+		
+
+
+	def blob_surgery_test(self, states):
+		new_states, new_arcs, new_I, new_F, in_map, out_map = self.blob_surgery_in_out(states)
+		self.blob_surgery(states, new_states, in_map, out_map, new_arcs, new_I, new_F)
+
+	def blob_surgery_in_out(self, states):
+		new_states = set()
+		in_map = {}
+		out_map = {}
+		new_arcs = set()
+		new_I = self.R.chart()
+		new_F = self.R.chart()
+		for state in states:
+			in_state, out_state = State(str(state.idx) + 'in'), State(str(state.idx) + 'out')
+			new_states.add(in_state)
+			new_states.add(out_state)
+			if in_state in self.Q or out_state in self.Q:
+				raise("haven't dealt with state idx collisions here")
+			in_map[state] = in_state
+			new_I[in_state] = self.λ[state]
+			new_F[out_state] = self.ρ[state]
+			out_map[state] = out_state
+		
+		for in_state in in_map.values():
+			for out_state in out_map.values():
+				new_arcs.add((in_state, Sym("surgery"), out_state, self.R.one))
+
+		return new_states, new_arcs, new_I, new_F, in_map, out_map
+
 
 
 	def trim(self) -> FSA:
