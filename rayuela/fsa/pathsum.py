@@ -189,6 +189,7 @@ class Pathsum:
 
 
 	def viterbi_fwd(self):
+		"The Viterbi algorithm run forwards."
 		assert self.fsa.acyclic
 		
 		α = self.R.chart()
